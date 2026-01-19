@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Image → Depth → 3D Parallax</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --primary: #4f8aff;
+      --primary-hover: #3a6ecc;
+      --bg-dark: #050505;
+      --panel-bg: rgba(30, 30, 30, 0.65);
+      --text-main: #f0f0f0;
+      --text-muted: #aaaaaa;
+      --border-light: rgba(255, 255, 255, 0.1);
+    }
+
+    html, body { 
+      height: 100%; margin: 0; 
+      background: radial-gradient(circle at center, #1a1b26 0%, #000000 100%); 
+      color: var(--text-main); 
+      font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; 
+      overflow: hidden;
+    }
+
+    /* --- UI 面板設計 --- */
+    #ui {
+      position: fixed; left: 20px; top: 20px; z-index: 10;
+      width: 340px;
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-light);
+      border-radius: 16px; 
+      padding: 20px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      transition: opacity 0.3s;
+    }
+
+    #ui h1 { 
+      font-size: 16px; font-weight: 600; margin: 0 0 16px; 
+      display: flex; align-items: center; gap: 8px;
+      color: #fff; letter-spacing: 0.5px;
+    }
+
+    /* 上傳區塊美化 */
+    .upload-box {
+      border: 2px dashed var(--border-light);
+      border-radius: 8px;
+      padding: 15px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 16px;
+      background: rgba(255,255,255,0.02);
+    }
+    .upload-box:hover {
+      border-color: var(--primary);
+      background: rgba(79, 138, 255, 0.05);
+    }
+    .upload-box span { font-size: 13px; color: var(--text-muted); pointer-events: none;}
+    /* 隱藏原始 file input */
+    #file { display: none; }
+
+    /* 控制項佈局 */
+    .control-group { margin-bottom: 14px; }
+    .label-row { display: flex; justify-content: space-between; margin-bottom: 6px; }
+    .label-row label { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+    .label-row span { font-size: 12px; color: var(--primary); font-family: monospace; }
+
+    /* 按鈕樣式 */
+    .btn-row { display: flex; gap: 10px; margin-top: 20px; margin-bottom: 10px;}
+    button {
+      flex: 1;
+      appearance: none; border: 0; cursor: pointer;
+      padding: 10px; border-radius: 8px;
+      font-size: 13px; font-weight: 600;
+      transition: all 0.2s;
+    }
+    #run { background: var(--primary); color: #fff; box-shadow: 0 4px 12px rgba(79, 138, 255, 0.3); }
+    #run:hover:not(:disabled) { background: var(--primary-hover); transform: translateY(-1px); }
+    #run:disabled { background: #333; color: #666; cursor: not-allowed; box-shadow: none; }
+    
+    #reset { background: rgba(255,255,255,0.1); color: var(--text-main); }
+    #reset:hover:not(:disabled) { background: rgba(255,255,255,0.2); }
+
+    /* Range Slider 美化 */
+    input[type=range] {
+      -webkit-appearance: none; width: 100%; background: transparent;
+    }
+    input[type=range]:focus { outline: none; }
+    /* Chrome/Safari */
+    input[type=range]::-webkit-slider-runnable-track {
+      width: 100%; height: 4px; cursor: pointer;
+      background: rgba(255,255,255,0.2); border-radius: 2px;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      height: 14px; width: 14px; border-radius: 50%;
+      background: #fff; cursor: pointer;
+      -webkit-appearance: none; margin-top: -5px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    }
+    /* Firefox */
+    input[type=range]::-moz-range-track {
+      width: 100%; height: 4px; cursor: pointer;
+      background: rgba(255,255,255,0.2); border-radius: 2px;
+    }
+    input[type=range]::-moz-range-thumb {
+      height: 14px; width: 14px; border: none; border-radius: 50%;
+      background: #fff; cursor: pointer;
+    }
+
+    /* 狀態與說明 */
+    small { display:block; color: var(--text-muted); font-size: 11px; margin-top: 15px; line-height: 1.4; border-top: 1px solid var(--border-light); padding-top: 10px;}
+    #status {
+      margin-top: 10px; font-size: 12px; color: #4fd1c5;
+      white-space: pre-wrap; min-height: 1.2em;
+    }
+
+    #canvasWrap { position: fixed; inset: 0; }
+
+    /* 浮水印 */
+    #credit {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 20px;              /* 🔺 字體變大 */
+  font-weight: 600;             /* 🔺 稍微加粗 */
+  letter-spacing: 2px;          /* 🔺 教育單位感 */
+  color: rgba(255,255,255,0.88);
+  z-index: 5;
+  pointer-events: none;
+  text-shadow:
+    0 2px 8px rgba(0,0,0,0.6),
+    0 0 18px rgba(0,0,0,0.35);   /* 🔺 展示場也清楚 *
+
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <h1>
+        <span>🧠</span> AI 深度 3D 視差
+    </h1>
+
+    <div class="upload-box" onclick="document.getElementById('file').click()">
+      <span id="fileNameDisplay">📁 點擊選擇圖片 (JPG/PNG)</span>
+      <input id="file" type="file" accept="image/*" />
+    </div>
+
+    <div class="control-group">
+      <div class="label-row">
+        <label>深度強度 (Displacement)</label>
+        <span id="valDisp">0.45</span>
+      </div>
+      <input id="disp" type="range" min="0" max="1.5" step="0.05" value="0.45" />
+    </div>
+
+    <div class="control-group">
+      <div class="label-row">
+        <label>視差靈敏度 (Sensitivity)</label>
+        <span id="valPar">0.12</span>
+      </div>
+      <input id="par" type="range" min="0" max="0.5" step="0.01" value="0.12" />
+    </div>
+
+    <div class="control-group">
+      <div class="label-row">
+        <label>3D網格密度 (Mesh Detail)</label>
+        <span id="valSeg">192</span>
+      </div>
+      <input id="seg" type="range" min="64" max="300" step="32" value="192" />
+    </div>
+
+    <div class="btn-row">
+      <button id="run" disabled>⚡ 開始運算</button>
+      <button id="reset" disabled>重設</button>
+    </div>
+
+    <div id="status">等待選圖…</div>
+    
+    <small>
+      💡 提示：運算由瀏覽器本地完成 (WebGPU/Wasm)。第一次下載模型約需 30-60 秒，請耐心等候。
+    </small>
+  </div>
+
+  <div id="canvasWrap"></div>
+
+  <canvas id="colorCanvas" style="display:none;"></canvas>
+  <canvas id="depthCanvas" style="display:none;"></canvas>
+
+  <div id="credit">社團法人台灣資訊教育發展協會 製作</div>
+
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+    import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2/dist/transformers.min.js';
+
+    // ---------- UI 元素 ----------
+    const elFile = document.getElementById('file');
+    const elFileName = document.getElementById('fileNameDisplay');
+    const elRun  = document.getElementById('run');
+    const elReset= document.getElementById('reset');
+    const elDisp = document.getElementById('disp');
+    const elPar  = document.getElementById('par');
+    const elSeg  = document.getElementById('seg');
+    
+    // 數值顯示元素
+    const vDisp = document.getElementById('valDisp');
+    const vPar = document.getElementById('valPar');
+    const vSeg = document.getElementById('valSeg');
+    
+    const status = document.getElementById('status');
+    const colorCanvas = document.getElementById('colorCanvas');
+    const depthCanvas = document.getElementById('depthCanvas');
+    const colorCtx = colorCanvas.getContext('2d', { willReadFrequently: true });
+    const depthCtx = depthCanvas.getContext('2d', { willReadFrequently: true });
+
+    function setStatus(msg) { status.textContent = msg; }
+
+    // 更新數值顯示的輔助函式
+    function updateVal(el, val) { el.textContent = val; }
+    elDisp.addEventListener('input', (e) => updateVal(vDisp, e.target.value));
+    elPar.addEventListener('input', (e) => updateVal(vPar, e.target.value));
+    elSeg.addEventListener('input', (e) => updateVal(vSeg, e.target.value));
+
+    let fileURL = null;
+    elFile.addEventListener('change', () => {
+      if (fileURL) URL.revokeObjectURL(fileURL);
+      const f = elFile.files?.[0];
+      if (!f) {
+        elRun.disabled = true;
+        elFileName.textContent = "📁 點擊選擇圖片 (JPG/PNG)";
+        setStatus('等待選圖…');
+        return;
+      }
+      fileURL = URL.createObjectURL(f);
+      elFileName.textContent = `📷 ${f.name}`;
+      elFileName.style.color = "#4f8aff";
+      elRun.disabled = false;
+      setStatus('準備就緒，請點擊「開始運算」');
+    });
+
+    // ---------- Three.js 場景設定 ----------
+    const wrap = document.getElementById('canvasWrap');
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); // alpha: true 允許背景透視
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    wrap.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    // 移除純色背景，讓 CSS 的漸層背景透出來，或者在這裡設定
+    // scene.background = new THREE.Color(0x0b0c10); 
+
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.01, 100);
+    camera.position.set(0, 0, 1.25);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.85);
+    scene.add(ambient);
+
+    const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+    dir.position.set(1.2, 1.0, 1.5);
+    scene.add(dir);
+
+    let plane = null;
+    let material = null;
+
+    const mouse = { x: 0, y: 0 };
+    
+    // 增加平滑移動效果
+    let targetRotationX = 0;
+    let targetRotationY = 0;
+
+    window.addEventListener('mousemove', (e) => {
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -((e.clientY / window.innerHeight) * 2 - 1);
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      if (plane) {
+        const par = parseFloat(elPar.value);
+        // 使用簡單的線性插值 (Lerp) 讓轉動更平滑
+        targetRotationY = mouse.x * par;
+        targetRotationX = mouse.y * par;
+        
+        plane.rotation.y += (targetRotationY - plane.rotation.y) * 0.1;
+        plane.rotation.x += (targetRotationX - plane.rotation.x) * 0.1;
+      }
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    function clearPlane() {
+      if (!plane) return;
+      scene.remove(plane);
+      plane.geometry.dispose();
+      if (plane.material?.map) plane.material.map.dispose();
+      if (plane.material?.displacementMap) plane.material.displacementMap.dispose();
+      plane.material.dispose();
+      plane = null;
+      material = null;
+    }
+
+    // ---------- Depth Estimation Logic ----------
+    async function chooseDevice() {
+      if (!navigator.gpu) return 'wasm'; // 如果不支援 WebGPU 回退到 WASM
+      return 'webgpu';
+    }
+
+    env.allowLocalModels = false;
+    let depthEstimator = null;
+
+    async function getPipeline() {
+      if (depthEstimator) return depthEstimator;
+      const device = await chooseDevice();
+      setStatus(`正在載入 AI 模型... (Engine: ${device})`);
+      
+      const modelId = 'Xenova/depth-anything-small-hf';
+      try {
+        depthEstimator = await pipeline('depth-estimation', modelId, { device });
+      } catch (e) {
+        console.warn('GPU init failed, retrying with WASM:', e);
+        depthEstimator = await pipeline('depth-estimation', modelId);
+      }
+      return depthEstimator;
+    }
+
+    async function loadImageToColorCanvas(url) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = url;
+      await img.decode();
+      const MAX = 1024;
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      const scale = Math.min(1, MAX / Math.max(w, h));
+      const W = Math.round(w * scale);
+      const H = Math.round(h * scale);
+      colorCanvas.width = W;
+      colorCanvas.height = H;
+      colorCtx.clearRect(0, 0, W, H);
+      colorCtx.drawImage(img, 0, 0, W, H);
+      return { W, H };
+    }
+
+    function rawDepthToCanvas(depthRawImage, targetW, targetH) {
+      const srcW = depthRawImage.width;
+      const srcH = depthRawImage.height;
+      const src = depthRawImage.data;
+      const tmp = document.createElement('canvas');
+      tmp.width = srcW;
+      tmp.height = srcH;
+      const tctx = tmp.getContext('2d', { willReadFrequently: true });
+      const imgData = tctx.createImageData(srcW, srcH);
+      for (let i = 0; i < srcW * srcH; i++) {
+        const v = src[i];
+        const j = i * 4;
+        imgData.data[j] = v;
+        imgData.data[j + 1] = v;
+        imgData.data[j + 2] = v;
+        imgData.data[j + 3] = 255;
+      }
+      tctx.putImageData(imgData, 0, 0);
+      depthCanvas.width = targetW;
+      depthCanvas.height = targetH;
+      depthCtx.clearRect(0, 0, targetW, targetH);
+      depthCtx.drawImage(tmp, 0, 0, targetW, targetH);
+    }
+
+    function build3DPlane() {
+      clearPlane();
+      const W = colorCanvas.width;
+      const H = colorCanvas.height;
+      const aspect = W / H;
+      const height = 1.6;
+      const width = height * aspect;
+      const seg = parseInt(elSeg.value, 10);
+      
+      const geom = new THREE.PlaneGeometry(width, height, seg, seg);
+      const colorTex = new THREE.CanvasTexture(colorCanvas);
+      colorTex.colorSpace = THREE.SRGBColorSpace;
+      
+      const depthTex = new THREE.CanvasTexture(depthCanvas);
+      
+      material = new THREE.MeshStandardMaterial({
+        map: colorTex,
+        displacementMap: depthTex,
+        displacementScale: parseFloat(elDisp.value),
+        roughness: 0.8, // 稍微降低粗糙度，讓光影更好看
+        metalness: 0.1,
+        side: THREE.DoubleSide
+      });
+
+      plane = new THREE.Mesh(geom, material);
+      scene.add(plane);
+    }
+
+    // 綁定即時控制
+    elDisp.addEventListener('input', () => { if (material) material.displacementScale = parseFloat(elDisp.value); });
+    elSeg.addEventListener('change', () => { if (plane) build3DPlane(); });
+
+    elRun.addEventListener('click', async () => {
+      if (!fileURL) return;
+      elRun.disabled = true;
+      elReset.disabled = true;
+      try {
+        setStatus('讀取圖片像素...');
+        const { W, H } = await loadImageToColorCanvas(fileURL);
+        
+        setStatus('AI 正在分析深度結構 (這需要幾秒鐘)...');
+        const pipe = await getPipeline();
+        const out = await pipe(fileURL);
+        
+        rawDepthToCanvas(out.depth, W, H);
+        setStatus('正在生成 3D 網格...');
+        build3DPlane();
+        setStatus('完成！請移動滑鼠觀看效果 ✨');
+        elReset.disabled = false;
+      } catch (err) {
+        console.error(err);
+        setStatus('錯誤：' + (err?.message || err));
+      } finally {
+        elRun.disabled = false;
+      }
+    });
+
+    elReset.addEventListener('click', () => {
+      clearPlane();
+      setStatus('已重設。');
+    });
+  </script>
+</body>
+</html>
